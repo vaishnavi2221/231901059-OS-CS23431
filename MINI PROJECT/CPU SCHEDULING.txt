@@ -1,0 +1,257 @@
+# --- keep your existing imports ---
+import tkinter as tk
+from tkinter import messagebox
+from tkinter import ttk
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.patches as mpatches
+from matplotlib.figure import Figure
+
+class CPUSchedulerGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("✨ CPU Scheduling Visualizer ✨")
+        self.root.configure(bg='#fffaf0')
+
+        self.process_count = 5
+        self.entries = {'arrival': [], 'burst': [], 'priority': []}
+        self.colors = ['#ff6f61', '#ffcc5c', '#f0a500', '#9b59b6', '#5dade2']
+
+        self.create_widgets()
+
+    def create_widgets(self):
+        title_label = tk.Label(self.root, text="🧠 CPU Scheduling Simulator", font=("Helvetica", 16, 'bold'), bg='#fffaf0', fg='#333')
+        title_label.pack(pady=(10, 5))
+
+        input_frame = tk.LabelFrame(self.root, text="🛫 Enter Process Details", font=('Helvetica', 12, 'bold'), bg='#fffaf0', fg="#444", padx=10, pady=10, bd=2)
+        input_frame.pack(padx=15, pady=5, fill='x')
+
+        headers = ['Arrival Time', 'Burst Time', 'Priority']
+        for i, header in enumerate(headers):
+            tk.Label(input_frame, text=header, font=('Helvetica', 10, 'bold'), bg='#fffaf0').grid(row=0, column=i)
+            for j in range(self.process_count):
+                entry = tk.Entry(input_frame, width=10, font=("Helvetica", 10))
+                entry.grid(row=j + 1, column=i, padx=5, pady=3)
+                self.entries[header.lower().split()[0]].append(entry)
+
+        algo_frame = tk.Frame(self.root, bg='#fffaf0')
+        algo_frame.pack(pady=10)
+
+        tk.Label(algo_frame, text="📌 Choose Algorithm:", font=('Helvetica', 12), bg='#fffaf0').pack(side='left')
+        self.algo_var = tk.StringVar(value="FCFS")
+        algo_dropdown = ttk.Combobox(algo_frame, textvariable=self.algo_var, values=["FCFS", "SJF", "Priority", "RR"], width=12, state='readonly', font=('Helvetica', 10))
+        algo_dropdown.pack(side='left', padx=10)
+
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TCombobox", fieldbackground="#fdf6e3", background="#fdf6e3")
+
+        run_button = tk.Button(self.root, text="▶ Run Scheduler", font=('Helvetica', 12, 'bold'),
+                               bg='#ff6f61', fg='white', activebackground='#e74c3c', activeforeground='white',
+                               relief='raised', bd=3, padx=10, pady=5,
+                               command=self.run_scheduling)
+        run_button.pack(pady=10)
+
+        self.gantt_frame = tk.Frame(self.root, bg='#fffaf0')
+        self.gantt_frame.pack(pady=5, fill='x')
+        self.graph_frame = tk.Frame(self.root, bg='#fffaf0')
+        self.graph_frame.pack(pady=5, fill='x')
+
+    def calculate_fcfs(self, processes):
+        time = 0
+        for process in sorted(processes, key=lambda x: x['arrival']):
+            start_time = max(time, process['arrival'])
+            process['start'] = start_time
+            process['completion'] = start_time + process['burst']
+            process['waiting'] = process['start'] - process['arrival']
+            process['turnaround'] = process['completion'] - process['arrival']
+            time = process['completion']
+        return processes
+
+    def calculate_sjf(self, processes):
+        time = 0
+        completed = []
+        ready_queue = []
+        while len(completed) < len(processes):
+            ready_queue.extend([p for p in processes if p['arrival'] <= time and p not in completed and p not in ready_queue])
+            if not ready_queue:
+                time += 1
+                continue
+            ready_queue.sort(key=lambda x: x['burst'])
+            process = ready_queue.pop(0)
+            process['start'] = time
+            process['completion'] = time + process['burst']
+            process['waiting'] = process['start'] - process['arrival']
+            process['turnaround'] = process['completion'] - process['arrival']
+            completed.append(process)
+            time = process['completion']
+        return completed
+
+    def calculate_priority(self, processes):
+        time = 0
+        completed = []
+        ready_queue = []
+        while len(completed) < len(processes):
+            ready_queue.extend([p for p in processes if p['arrival'] <= time and p not in completed and p not in ready_queue])
+            if not ready_queue:
+                time += 1
+                continue
+            ready_queue.sort(key=lambda x: x['priority'])
+            process = ready_queue.pop(0)
+            process['start'] = time
+            process['completion'] = time + process['burst']
+            process['waiting'] = process['start'] - process['arrival']
+            process['turnaround'] = process['completion'] - process['arrival']
+            completed.append(process)
+            time = process['completion']
+        return completed
+
+    def calculate_rr(self, processes, quantum=2):
+        time = 0
+        queue = [p.copy() for p in sorted(processes, key=lambda x: x['arrival'])]
+        remaining = {p['id']: p['burst'] for p in queue}
+        completed = []
+        ready_queue = []
+        timeline = []
+        arrived = set()
+
+        while queue or ready_queue:
+            while queue and queue[0]['arrival'] <= time:
+                p = queue.pop(0)
+                ready_queue.append(p)
+                arrived.add(p['id'])
+
+            if ready_queue:
+                current = ready_queue.pop(0)
+                exec_time = min(quantum, remaining[current['id']])
+                timeline.append({'id': current['id'], 'start': time, 'duration': exec_time})
+                remaining[current['id']] -= exec_time
+                time += exec_time
+
+                while queue and queue[0]['arrival'] <= time:
+                    p = queue.pop(0)
+                    ready_queue.append(p)
+                    arrived.add(p['id'])
+
+                if remaining[current['id']] > 0:
+                    ready_queue.append(current)
+                else:
+                    current['completion'] = time
+                    current['turnaround'] = current['completion'] - current['arrival']
+                    current['waiting'] = current['turnaround'] - current['burst']
+                    completed.append(current)
+            else:
+                time += 1
+
+        for p in processes:
+            p['blocks'] = [(t['start'], t['duration']) for t in timeline if t['id'] == p['id']]
+            if p['id'] in remaining:
+                p['completion'] = max(s + d for s, d in p['blocks'])
+                p['turnaround'] = p['completion'] - p['arrival']
+                p['waiting'] = p['turnaround'] - p['burst']
+
+        return processes
+
+    def run_scheduling(self):
+        for widget in self.gantt_frame.winfo_children():
+            widget.destroy()
+        for widget in self.graph_frame.winfo_children():
+            widget.destroy()
+
+        try:
+            arrival_times = [int(e.get()) for e in self.entries['arrival']]
+            burst_times = [int(e.get()) for e in self.entries['burst']]
+            priority_values = [int(e.get()) for e in self.entries['priority']]
+        except ValueError:
+            messagebox.showerror("Input Error", "All fields must contain valid integers.")
+            return
+
+        processes = [{'id': f"P{i+1}", 'arrival': at, 'burst': bt, 'priority': pr}
+                     for i, (at, bt, pr) in enumerate(zip(arrival_times, burst_times, priority_values))]
+
+        algo = self.algo_var.get()
+
+        all_avgs = {}
+
+        for current_algo in ["FCFS", "SJF", "Priority", "RR"]:
+            if current_algo == "FCFS":
+                result = self.calculate_fcfs([p.copy() for p in processes])
+            elif current_algo == "SJF":
+                result = self.calculate_sjf([p.copy() for p in processes])
+            elif current_algo == "Priority":
+                result = self.calculate_priority([p.copy() for p in processes])
+            else:
+                result = self.calculate_rr([p.copy() for p in processes])
+
+            avg_waiting = sum(p['waiting'] for p in result) / len(result)
+            avg_turnaround = sum(p['turnaround'] for p in result) / len(result)
+            all_avgs[current_algo] = (avg_waiting, avg_turnaround)
+
+            if algo == current_algo:
+                self.plot_static_gantt_chart(result, algo, is_rr=(algo == "RR"))
+                messagebox.showinfo("Results", f"{algo} Scheduling Completed!\n\nAverage Waiting Time: {avg_waiting:.2f}\nAverage Turnaround Time: {avg_turnaround:.2f}")
+
+        self.show_comparison_graph(all_avgs)
+
+    def plot_static_gantt_chart(self, processes, title, is_rr=False):
+        for widget in self.gantt_frame.winfo_children():
+            widget.destroy()
+
+        fig = Figure(figsize=(7, 2), dpi=100)
+        ax = fig.add_subplot(111)
+        ax.set_title(f"{title} Gantt Chart", fontsize=10)
+        ax.set_ylim(0, 1)
+        ax.axis('off')
+
+        blocks = []
+        if is_rr:
+            for p in processes:
+                blocks.extend([(s, d, p['id']) for s, d in p.get('blocks', [])])
+        else:
+            blocks = [(p['start'], p['burst'], p['id']) for p in processes]
+        blocks.sort()
+
+        if blocks:
+            ax.set_xlim(0, max(s + d for s, d, _ in blocks) + 1)
+
+        for s, dur, pid in blocks:
+            rect = mpatches.Rectangle((s, 0.25), dur, 0.5, color='#5dade2', ec='black')
+            ax.add_patch(rect)
+            ax.text(s + dur / 2, 0.5, pid, ha='center', va='center', fontsize=8, weight='bold')
+            ax.text(s, 0.1, str(s), ha='center', va='center', fontsize=6)
+            ax.text(s + dur, 0.1, str(s + dur), ha='center', va='center', fontsize=6)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.gantt_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack()
+
+    def show_comparison_graph(self, all_avgs):
+        fig = Figure(figsize=(8, 3), dpi=100)
+        ax = fig.add_subplot(111)
+        categories = list(all_avgs.keys())
+        waiting = [all_avgs[algo][0] for algo in categories]
+        turnaround = [all_avgs[algo][1] for algo in categories]
+
+        bar_width = 0.3
+        x = range(len(categories))
+
+        bars1 = ax.bar([i - bar_width/2 for i in x], waiting, width=bar_width, label='Waiting Time', color='#3498db')
+        bars2 = ax.bar([i + bar_width/2 for i in x], turnaround, width=bar_width, label='Turnaround Time', color='#e67e22')
+
+        ax.set_xticks(list(x))
+        ax.set_xticklabels(categories, fontsize=10)
+        ax.set_title("Average Waiting and Turnaround Times", fontsize=12)
+        ax.legend(fontsize=8)
+        ax.set_ylim(0, max(waiting + turnaround) + 10)
+
+        for bar in bars1 + bars2:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2, height + 0.5, f"{height:.2f}", ha='center', fontsize=8)
+
+        canvas = FigureCanvasTkAgg(fig, master=self.graph_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack()
+
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = CPUSchedulerGUI(root)
+    root.mainloop()
